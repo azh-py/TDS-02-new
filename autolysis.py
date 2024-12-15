@@ -8,6 +8,7 @@
 #   "chardet",
 #   "tenacity",
 #   "wordcloud",
+#   "statsmodels",
 #   "scikit-learn"
 # ]
 # ///
@@ -23,86 +24,85 @@ from wordcloud import WordCloud
 from tenacity import retry, stop_after_attempt, wait_fixed
 import logging
 
-# Logging setup
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def load_data(file_path):
-    """Load and validate the CSV file."""
-    with open(file_path, "rb") as f:
-        encoding = chardet.detect(f.read())["encoding"]
-    df = pd.read_csv(file_path, encoding=encoding, low_memory=False)
-    if df.empty:
-        raise ValueError("The dataset is empty.")
-    logging.info(f"Data loaded successfully from {file_path}")
-    return df
-
-def detect_columns(df):
-    """Detect numeric and text columns."""
-    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-    logging.info(f"Detected numeric columns: {numeric_cols}")
-    return numeric_cols
-
-def create_output_directory(name):
-    """Create output directory."""
-    output_dir = os.path.join(".", name)
-    os.makedirs(output_dir, exist_ok=True)
-    return output_dir
-
-def visualize_distributions(df, numeric_cols, output_dir):
-    """Generate a limited number of visualizations."""
-    for column in numeric_cols[:3]:  # Limit to 3 plots
-        plt.figure()
-        sns.histplot(df[column].dropna(), kde=True)
-        plt.title(f"Distribution of {column}")
-        plt.savefig(os.path.join(output_dir, f"{column}_distribution.png"), dpi=300)
-        plt.close()
-        logging.info(f"Saved distribution for {column}")
-
-@retry(stop=stop_after_attempt(2), wait=wait_fixed(2))
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def fetch_narrative_from_api(payload):
-    """Fetch narrative using API with retry mechanism."""
     api_url = "http://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {os.environ['AIPROXY_TOKEN']}", "Content-Type": "application/json"}
-    response = httpx.post(api_url, headers=headers, json=payload, timeout=10)
+    headers = {
+        "Authorization": f"Bearer {os.getenv('AIPROXY_TOKEN')}",
+        "Content-Type": "application/json"
+    }
+    response = httpx.post(api_url, headers=headers, json=payload, timeout=15)
     response.raise_for_status()
     return response.json()
 
-def generate_narrative(df):
-    """Generate summary narrative."""
-    payload = {
-        "model": "gpt-4o-mini",
-        "messages": [{"role": "user", "content": f"Summarize dataset with {len(df)} rows and {len(df.columns)} columns."}]
-    }
-    result = fetch_narrative_from_api(payload)
-    return result["choices"][0]["message"]["content"]
+def load_data(file_path):
+    with open(file_path, 'rb') as f:
+        encoding = chardet.detect(f.read())['encoding']
+    df = pd.read_csv(file_path, encoding=encoding, low_memory=False)
+    if df.empty or df.columns.isnull().any():
+        raise ValueError("Invalid or empty CSV file.")
+    return df
 
-def save_summary_statistics(df, output_dir):
-    """Save summary statistics to a text file."""
-    stats_path = os.path.join(output_dir, "summary_statistics.txt")
-    df.describe(include="all").to_string(stats_path)
-    logging.info("Saved summary statistics.")
+def create_output_dir(dataset_name):
+    output_dir = os.path.join('.', dataset_name)
+    os.makedirs(output_dir, exist_ok=True)
+    return output_dir
+
+def save_visuals(df, output_dir):
+    numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
+    for column in numeric_columns[:3]:
+        plt.figure()
+        sns.histplot(df[column].dropna(), kde=True)
+        plt.title(f'Distribution of {column}')
+        plt.xlabel(column)
+        plt.ylabel("Frequency")
+        plt.savefig(os.path.join(output_dir, f'{column}_distribution.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+
+def generate_wordcloud(df, output_dir):
+    text_columns = [col for col in df.columns if df[col].dtype == 'object']
+    for column in text_columns[:2]:
+        text_data = " ".join(df[column].dropna().astype(str))
+        wordcloud = WordCloud(width=800, height=400).generate(text_data)
+        plt.figure(figsize=(10, 6))
+        plt.imshow(wordcloud, interpolation='bilinear')
+        plt.axis('off')
+        plt.title(f'Word Cloud for {column}')
+        plt.savefig(os.path.join(output_dir, f'{column}_wordcloud.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+
+def save_summary_stats(df, output_dir):
+    stats_file = os.path.join(output_dir, "summary_statistics.txt")
+    df.describe(include='all').to_string(open(stats_file, "w"))
+
+def create_prompt(df):
+    prompt = f"""You are a data analyst. Analyze the dataset with {len(df)} rows and {len(df.columns)} columns.
+    Highlight key trends, outliers, and actionable insights."""
+    return prompt
 
 def save_readme(narrative, output_dir):
-    """Save narrative to README."""
-    readme_path = os.path.join(output_dir, "README.md")
-    with open(readme_path, "w") as f:
+    readme_file = os.path.join(output_dir, "README.md")
+    with open(readme_file, "w") as f:
         f.write(narrative)
-    logging.info("Saved README.")
 
 def main(file_path):
     dataset_name = os.path.splitext(os.path.basename(file_path))[0]
-    output_dir = create_output_directory(dataset_name)
-
+    output_dir = create_output_dir(dataset_name)
     df = load_data(file_path)
-    numeric_cols = detect_columns(df)
 
-    visualize_distributions(df, numeric_cols, output_dir)
-    save_summary_statistics(df, output_dir)
+    save_visuals(df, output_dir)
+    generate_wordcloud(df, output_dir)
+    save_summary_stats(df, output_dir)
 
-    narrative = generate_narrative(df)
+    prompt = create_prompt(df)
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": prompt}]
+    }
+    narrative = fetch_narrative_from_api(payload)['choices'][0]['message']['content']
     save_readme(narrative, output_dir)
-
-    logging.info("Script execution completed.")
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
