@@ -22,8 +22,7 @@ import httpx
 import chardet
 from wordcloud import WordCloud
 from tenacity import retry, stop_after_attempt, wait_fixed
-from statsmodels.tsa.seasonal import seasonal_decompose
-from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.tree import DecisionTreeClassifier
 import logging
 import glob
 
@@ -66,7 +65,7 @@ def create_output_directory(dataset_name):
     return output_dir
 
 def visualize_distributions(df, numeric_columns, output_dir):
-    for column in numeric_columns:
+    for column in numeric_columns[:5]:  # Limit the number of plots to reduce runtime
         plt.figure()
         sns.histplot(df[column].dropna(), kde=True, color='skyblue')
         plt.title(f'Distribution of {column}')
@@ -78,7 +77,7 @@ def visualize_distributions(df, numeric_columns, output_dir):
         log_message(f"Saved distribution plot for {column} as {output_file}")
 
 def generate_wordcloud(df, text_columns, output_dir):
-    for column in text_columns:
+    for column in text_columns[:2]:  # Limit the number of word clouds to reduce runtime
         text_data = " ".join(df[column].dropna().astype(str))
         wordcloud = WordCloud(width=800, height=400, background_color='white').generate(text_data)
         plt.figure(figsize=(10, 6))
@@ -94,12 +93,12 @@ def generate_wordcloud(df, text_columns, output_dir):
 def fetch_narrative_from_api(payload):
     api_url = "http://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {os.environ['AI_PROXY']}",  # Updated variable name
+        "Authorization": f"Bearer {os.environ['AIPROXY_TOKEN']}",
         "Content-Type": "application/json"
     }
-    response = httpx.post(api_url, headers=headers, json=payload, timeout=15)  # Timeout reduced
+    response = httpx.post(api_url, headers=headers, json=payload, timeout=10)  # Reduced timeout
     response.raise_for_status()
-    log_message(f"API Response: {response.json()}")  # Debug logging
+    log_message(f"API Response: {response.json()}")
     return response.json()
 
 def create_prompt(df):
@@ -108,10 +107,6 @@ def create_prompt(df):
     - Number of Rows: {len(df)}
     - Number of Columns: {len(df.columns)}
     - Key Data Types: {list(df.dtypes.unique())}
-
-    ### Summary Statistics:
-    {df.describe(include=[float, int]).to_string()}
-
     Identify key trends, anomalies, and actionable findings.
     """
     log_message("Generated concise API prompt.")
@@ -134,13 +129,13 @@ def generate_narrative(df):
 def save_summary_statistics(df, output_dir):
     stats_file = os.path.join(output_dir, "summary_statistics.txt")
     with open(stats_file, "w") as f:
-        f.write(df.describe(include=[float, int]).to_string())  # Only numeric summaries
+        f.write(df.describe(include='all').to_string())
     log_message(f"Saved summary statistics as {stats_file}")
 
 def save_readme(narrative, output_dir):
     readme_path = os.path.join(output_dir, "README.md")
     with open(readme_path, "w") as f:
-        f.write(f"# Data Analysis Report\n\n{narrative}")
+        f.write(narrative)
     log_message(f"Saved README.md at {readme_path}")
 
 def verify_output_files(output_dir):
