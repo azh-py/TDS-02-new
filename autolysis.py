@@ -94,10 +94,10 @@ def generate_wordcloud(df, text_columns, output_dir):
 def fetch_narrative_from_api(payload):
     api_url = "http://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {os.environ['AIPROXY_TOKEN']}",
+        "Authorization": f"Bearer {os.environ['AI_PROXY']}",  # Updated variable name
         "Content-Type": "application/json"
     }
-    response = httpx.post(api_url, headers=headers, json=payload, timeout=30)
+    response = httpx.post(api_url, headers=headers, json=payload, timeout=15)  # Timeout reduced
     response.raise_for_status()
     log_message(f"API Response: {response.json()}")  # Debug logging
     return response.json()
@@ -108,6 +108,10 @@ def create_prompt(df):
     - Number of Rows: {len(df)}
     - Number of Columns: {len(df.columns)}
     - Key Data Types: {list(df.dtypes.unique())}
+
+    ### Summary Statistics:
+    {df.describe(include=[float, int]).to_string()}
+
     Identify key trends, anomalies, and actionable findings.
     """
     log_message("Generated concise API prompt.")
@@ -130,13 +134,13 @@ def generate_narrative(df):
 def save_summary_statistics(df, output_dir):
     stats_file = os.path.join(output_dir, "summary_statistics.txt")
     with open(stats_file, "w") as f:
-        f.write(df.describe(include='all').to_string())
+        f.write(df.describe(include=[float, int]).to_string())  # Only numeric summaries
     log_message(f"Saved summary statistics as {stats_file}")
 
 def save_readme(narrative, output_dir):
     readme_path = os.path.join(output_dir, "README.md")
     with open(readme_path, "w") as f:
-        f.write(narrative)
+        f.write(f"# Data Analysis Report\n\n{narrative}")
     log_message(f"Saved README.md at {readme_path}")
 
 def verify_output_files(output_dir):
